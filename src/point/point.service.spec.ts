@@ -421,4 +421,147 @@ describe('PointService', () => {
       });
     });
   });
+
+  // getUserPoint 테스트
+  describe('getUserPoint (포인트 조회)', () => {
+    describe('정상 케이스', () => {
+      it('기존 사용자의 포인트를 조회해야 한다', async () => {
+        // Given: 기존 사용자 포인트
+        const userId = 1;
+        const expectedPoints = 5000;
+        
+        mockUserPointTable.selectById.mockResolvedValue({
+          id: userId,
+          point: expectedPoints,
+          updateMillis: Date.now(),
+        });
+        
+        // When: 포인트 조회
+        const result = await service.getUserPoint(userId);
+        
+        // Then: 정확한 포인트 반환
+        expect(result).toBe(expectedPoints);
+        expect(mockUserPointTable.selectById).toHaveBeenCalledWith(userId);
+      });
+
+      it('새로운 사용자의 포인트는 0을 반환해야 한다', async () => {
+        // Given: 새로운 사용자 (기본값 0)
+        const userId = 999;
+        
+        mockUserPointTable.selectById.mockResolvedValue({
+          id: userId,
+          point: 0,
+          updateMillis: Date.now(),
+        });
+        
+        // When: 포인트 조회
+        const result = await service.getUserPoint(userId);
+        
+        // Then: 0 반환
+        expect(result).toBe(0);
+        expect(mockUserPointTable.selectById).toHaveBeenCalledWith(userId);
+      });
+
+      it('여러 사용자의 포인트를 독립적으로 조회해야 한다', async () => {
+        // Given: 여러 사용자
+        const user1 = 1;
+        const user2 = 2;
+        
+        mockUserPointTable.selectById
+          .mockResolvedValueOnce({
+            id: user1,
+            point: 1000,
+            updateMillis: Date.now(),
+          })
+          .mockResolvedValueOnce({
+            id: user2,
+            point: 2000,
+            updateMillis: Date.now(),
+          });
+        
+        // When: 각각 조회
+        const result1 = await service.getUserPoint(user1);
+        const result2 = await service.getUserPoint(user2);
+        
+        // Then: 각각 독립적인 결과
+        expect(result1).toBe(1000);
+        expect(result2).toBe(2000);
+        expect(mockUserPointTable.selectById).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    describe('예외 케이스', () => {
+      it('0이거나 음수인 사용자 ID에 대해 에러를 발생시켜야 한다', async () => {
+        // Given: 잘못된 사용자 ID
+        const invalidUserIds = [0, -1, -100];
+        
+        // When & Then: 잘못된 사용자 ID 시 예외 발생
+        for (const userId of invalidUserIds) {
+          await expect(service.getUserPoint(userId))
+            .rejects.toThrow('Invalid user ID');
+        }
+      });
+    });
+
+    describe('경계값 테스트', () => {
+      it('매우 큰 사용자 ID에 대해 에러를 발생시켜야 한다', async () => {
+        // Given: 매우 큰 사용자 ID (성능 문제 가능성)
+        const largeUserId = 999999999999;
+        
+        // When & Then: 매우 큰 사용자 ID 시 에러 발생
+        await expect(service.getUserPoint(largeUserId))
+          .rejects.toThrow('User ID is too large');
+      });
+
+      it('최대 정수값 사용자 ID에 대해 에러를 발생시켜야 한다', async () => {
+        // Given: 최대 정수값 사용자 ID
+        const maxIntUserId = Number.MAX_SAFE_INTEGER;
+        
+        // When & Then: 최대 정수값 시 에러 발생
+        await expect(service.getUserPoint(maxIntUserId))
+          .rejects.toThrow('User ID is too large');
+      });
+    });
+
+    describe('데이터베이스 오류 케이스', () => {
+      it('사용자 포인트 조회 실패 시 에러를 발생시켜야 한다', async () => {
+        // Given: 데이터베이스 조회 실패
+        const userId = 1;
+        
+        mockUserPointTable.selectById.mockRejectedValue(
+          new Error('Database connection failed')
+        );
+        
+        // When & Then: 데이터베이스 오류 시 예외 발생
+        await expect(service.getUserPoint(userId))
+          .rejects.toThrow('Database connection failed');
+      });
+
+      it('네트워크 타임아웃 시 에러를 발생시켜야 한다', async () => {
+        // Given: 네트워크 타임아웃
+        const userId = 1;
+        
+        mockUserPointTable.selectById.mockRejectedValue(
+          new Error('Request timeout')
+        );
+        
+        // When & Then: 타임아웃 시 예외 발생
+        await expect(service.getUserPoint(userId))
+          .rejects.toThrow('Request timeout');
+      });
+
+      it('메모리 부족 시 에러를 발생시켜야 한다', async () => {
+        // Given: 메모리 부족 상황
+        const userId = 1;
+        
+        mockUserPointTable.selectById.mockRejectedValue(
+          new Error('Out of memory')
+        );
+        
+        // When & Then: 메모리 부족 시 예외 발생
+        await expect(service.getUserPoint(userId))
+          .rejects.toThrow('Out of memory');
+      });
+    });
+  });
 }); 
