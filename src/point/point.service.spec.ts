@@ -1020,4 +1020,250 @@ describe('PointService', () => {
       });
     });
   });
+
+  describe('getPointHistory (포인트 내역 조회)', () => {
+    describe('정상 케이스', () => {
+      it('사용자의 포인트 내역을 조회해야 한다', async () => {
+        // Given: 사용자 포인트 내역
+        const dto: PointUserDto = {
+          userId: 1,
+        };
+        const mockHistories = [
+          {
+            id: 1,
+            userId: dto.userId,
+            amount: 1000,
+            type: TransactionType.CHARGE,
+            timeMillis: Date.now(),
+          },
+          {
+            id: 2,
+            userId: dto.userId,
+            amount: 500,
+            type: TransactionType.USE,
+            timeMillis: Date.now(),
+          },
+        ];
+        
+        mockPointHistoryTable.selectAllByUserId.mockResolvedValue(mockHistories);
+        
+        // When: 포인트 내역 조회
+        const result = await service.getPointHistory(dto);
+        
+        // Then: 내역 반환
+        expect(result).toEqual(mockHistories);
+        expect(result).toHaveLength(2);
+        expect(result[0].type).toBe(TransactionType.CHARGE);
+        expect(result[1].type).toBe(TransactionType.USE);
+        expect(mockPointHistoryTable.selectAllByUserId).toHaveBeenCalledWith(dto.userId);
+      });
+
+      it('내역이 없을 때는 빈 배열을 반환해야 한다', async () => {
+        // Given: 내역이 없는 사용자
+        const dto: PointUserDto = {
+          userId: 999,
+        };
+        
+        mockPointHistoryTable.selectAllByUserId.mockResolvedValue([]);
+        
+        // When: 포인트 내역 조회
+        const result = await service.getPointHistory(dto);
+        
+        // Then: 빈 배열 반환
+        expect(result).toEqual([]);
+        expect(result).toHaveLength(0);
+        expect(mockPointHistoryTable.selectAllByUserId).toHaveBeenCalledWith(dto.userId);
+      });
+
+      it('여러 사용자의 내역을 독립적으로 조회해야 한다', async () => {
+        // Given: 여러 사용자
+        const dto1: PointUserDto = { userId: 1 };
+        const dto2: PointUserDto = { userId: 2 };
+        
+        const mockHistories1 = [
+          {
+            id: 1,
+            userId: dto1.userId,
+            amount: 1000,
+            type: TransactionType.CHARGE,
+            timeMillis: Date.now(),
+          },
+        ];
+        
+        const mockHistories2 = [
+          {
+            id: 2,
+            userId: dto2.userId,
+            amount: 500,
+            type: TransactionType.USE,
+            timeMillis: Date.now(),
+          },
+        ];
+        
+        mockPointHistoryTable.selectAllByUserId
+          .mockResolvedValueOnce(mockHistories1)
+          .mockResolvedValueOnce(mockHistories2);
+        
+        // When: 각각 내역 조회
+        const result1 = await service.getPointHistory(dto1);
+        const result2 = await service.getPointHistory(dto2);
+        
+        // Then: 각각 독립적인 결과
+        expect(result1).toEqual(mockHistories1);
+        expect(result2).toEqual(mockHistories2);
+        expect(result1).toHaveLength(1);
+        expect(result2).toHaveLength(1);
+        expect(mockPointHistoryTable.selectAllByUserId).toHaveBeenCalledTimes(2);
+      });
+
+      it('내역이 시간순으로 정렬되어야 한다', async () => {
+        // Given: 시간순 정렬이 필요한 내역
+        const dto: PointUserDto = {
+          userId: 1,
+        };
+        const now = Date.now();
+        const mockHistories = [
+          {
+            id: 1,
+            userId: dto.userId,
+            amount: 1000,
+            type: TransactionType.CHARGE,
+            timeMillis: now, // 이전 시간
+          },
+          {
+            id: 2,
+            userId: dto.userId,
+            amount: 500,
+            type: TransactionType.USE,
+            timeMillis: now + 1000, // 나중 시간
+          },
+        ];
+        
+        mockPointHistoryTable.selectAllByUserId.mockResolvedValue(mockHistories);
+        
+        // When: 포인트 내역 조회
+        const result = await service.getPointHistory(dto);
+        
+        // Then: 시간순 정렬 확인 (DB에서 정렬되어 온다고 가정)
+        expect(result).toHaveLength(2);
+        expect(result[0].timeMillis).toBeLessThanOrEqual(result[1].timeMillis);
+      });
+    });
+
+    describe('예외 케이스', () => {
+      it('0이거나 음수인 사용자 ID에 대해 에러를 발생시켜야 한다', async () => {
+        // Given: 잘못된 사용자 ID
+        const invalidDtos = [
+          { userId: 0 },
+          { userId: -1 },
+          { userId: -100 },
+        ];
+        
+        // When & Then: 잘못된 사용자 ID 시 예외 발생
+        for (const dto of invalidDtos) {
+          await expect(service.getPointHistory(dto as PointUserDto))
+            .rejects.toThrow();
+        }
+      });
+
+
+    });
+
+    describe('경계값 테스트', () => {
+      it('매우 큰 사용자 ID에 대해 에러를 발생시켜야 한다', async () => {
+        // Given: 매우 큰 사용자 ID (성능 문제 가능성)
+        const dto: PointUserDto = {
+          userId: 999999999999, // DTO 검증에서 차단
+        };
+        
+        // When & Then: 매우 큰 사용자 ID 시 에러 발생
+        await expect(service.getPointHistory(dto))
+          .rejects.toThrow();
+      });
+
+      it('최대 정수값 사용자 ID에 대해 에러를 발생시켜야 한다', async () => {
+        // Given: 최대 정수값 사용자 ID
+        const dto: PointUserDto = {
+          userId: Number.MAX_SAFE_INTEGER, // DTO 검증에서 차단
+        };
+        
+        // When & Then: 최대 정수값 시 에러 발생
+        await expect(service.getPointHistory(dto))
+          .rejects.toThrow();
+      });
+    });
+
+    describe('데이터베이스 오류 케이스', () => {
+      it('포인트 내역 조회 실패 시 에러를 발생시켜야 한다', async () => {
+        // Given: 데이터베이스 조회 실패
+        const dto: PointUserDto = {
+          userId: 1,
+        };
+        
+        mockPointHistoryTable.selectAllByUserId.mockRejectedValue(
+          new Error('Database connection failed')
+        );
+        
+        // When & Then: 데이터베이스 오류 시 예외 발생
+        await expect(service.getPointHistory(dto))
+          .rejects.toThrow('Database connection failed');
+      });
+
+      it('네트워크 타임아웃 시 에러를 발생시켜야 한다', async () => {
+        // Given: 네트워크 타임아웃
+        const dto: PointUserDto = {
+          userId: 1,
+        };
+        
+        mockPointHistoryTable.selectAllByUserId.mockRejectedValue(
+          new Error('Request timeout')
+        );
+        
+        // When & Then: 타임아웃 시 예외 발생
+        await expect(service.getPointHistory(dto))
+          .rejects.toThrow('Request timeout');
+      });
+
+      it('메모리 부족 시 에러를 발생시켜야 한다', async () => {
+        // Given: 메모리 부족 상황
+        const dto: PointUserDto = {
+          userId: 1,
+        };
+        
+        mockPointHistoryTable.selectAllByUserId.mockRejectedValue(
+          new Error('Out of memory')
+        );
+        
+        // When & Then: 메모리 부족 시 예외 발생
+        await expect(service.getPointHistory(dto))
+          .rejects.toThrow('Out of memory');
+      });
+    });
+
+    describe('대용량 데이터 케이스', () => {
+      it('많은 내역이 있어도 정상적으로 조회해야 한다', async () => {
+        // Given: 많은 내역
+        const dto: PointUserDto = {
+          userId: 1,
+        };
+        const mockHistories = Array.from({ length: 1000 }, (_, index) => ({
+          id: index + 1,
+          userId: dto.userId,
+          amount: 100,
+          type: index % 2 === 0 ? TransactionType.CHARGE : TransactionType.USE,
+          timeMillis: Date.now() + index,
+        }));
+        
+        mockPointHistoryTable.selectAllByUserId.mockResolvedValue(mockHistories);
+        
+        // When: 포인트 내역 조회
+        const result = await service.getPointHistory(dto);
+        
+        // Then: 모든 내역 반환
+        expect(result).toEqual(mockHistories);
+        expect(result).toHaveLength(1000);
+        expect(mockPointHistoryTable.selectAllByUserId).toHaveBeenCalledWith(dto.userId);
+      });
+    });
+  });
 }); 
