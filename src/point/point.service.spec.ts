@@ -331,5 +331,94 @@ describe('PointService', () => {
           .rejects.toThrow('User ID is too large');
       });
     });
+
+    describe('데이터베이스 오류 케이스', () => {
+      it('사용자 포인트 조회 실패 시 에러를 발생시켜야 한다', async () => {
+        // Given: 데이터베이스 조회 실패
+        const userId = 1;
+        const points = 1000;
+        
+        mockUserPointTable.selectById.mockRejectedValue(
+          new Error('Database connection failed')
+        );
+        
+        // When & Then: 데이터베이스 오류 시 예외 발생
+        await expect(service.addPoints(userId, points))
+          .rejects.toThrow('Database connection failed');
+      });
+
+      it('포인트 업데이트 실패 시 에러를 발생시켜야 한다', async () => {
+        // Given: 포인트 업데이트 실패
+        const userId = 1;
+        const points = 1000;
+        
+        mockUserPointTable.selectById.mockResolvedValue({
+          id: userId,
+          point: 0,
+          updateMillis: Date.now(),
+        });
+        mockUserPointTable.insertOrUpdate.mockRejectedValue(
+          new Error('Update failed')
+        );
+        
+        // When & Then: 업데이트 실패 시 예외 발생
+        await expect(service.addPoints(userId, points))
+          .rejects.toThrow('Update failed');
+      });
+
+      it('포인트 내역 저장 실패 시 에러를 발생시켜야 한다', async () => {
+        // Given: 포인트 내역 저장 실패
+        const userId = 1;
+        const points = 1000;
+        
+        mockUserPointTable.selectById.mockResolvedValue({
+          id: userId,
+          point: 0,
+          updateMillis: Date.now(),
+        });
+        mockUserPointTable.insertOrUpdate.mockResolvedValue({
+          id: userId,
+          point: points,
+          updateMillis: Date.now(),
+        });
+        mockPointHistoryTable.insert.mockRejectedValue(
+          new Error('History save failed')
+        );
+        
+        // When & Then: 내역 저장 실패 시 예외 발생
+        await expect(service.addPoints(userId, points))
+          .rejects.toThrow('History save failed');
+      });
+    });
+
+    describe('네트워크 및 시스템 오류 케이스', () => {
+      it('타임아웃 발생 시 에러를 발생시켜야 한다', async () => {
+        // Given: 네트워크 타임아웃
+        const userId = 1;
+        const points = 1000;
+        
+        mockUserPointTable.selectById.mockRejectedValue(
+          new Error('Request timeout')
+        );
+        
+        // When & Then: 타임아웃 시 예외 발생
+        await expect(service.addPoints(userId, points))
+          .rejects.toThrow('Request timeout');
+      });
+
+      it('메모리 부족 시 에러를 발생시켜야 한다', async () => {
+        // Given: 메모리 부족 상황
+        const userId = 1;
+        const points = 1000;
+        
+        mockUserPointTable.selectById.mockRejectedValue(
+          new Error('Out of memory')
+        );
+        
+        // When & Then: 메모리 부족 시 예외 발생
+        await expect(service.addPoints(userId, points))
+          .rejects.toThrow('Out of memory');
+      });
+    });
   });
 }); 
