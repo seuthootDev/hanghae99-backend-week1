@@ -102,6 +102,16 @@ export class PointService {
     };
   }
 
+  async getPointHistory(dto: PointUserDto): Promise<any[]> {
+    // 입력값 검증
+    this.validateUserId(dto.userId);
+    
+    // 포인트 내역 조회
+    const histories = await this.pointHistoryTable.selectAllByUserId(dto.userId);
+    
+    return histories;
+  }
+
   private validateUserId(userId: number): void {
     if (userId <= 0) {
       throw new Error('Invalid user ID');
