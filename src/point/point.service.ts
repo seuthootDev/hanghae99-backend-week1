@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { UserPointTable } from '../database/userpoint.table';
 import { PointHistoryTable } from '../database/pointhistory.table';
 import { TransactionType } from './point.model';
-import { PointChargeDto, PointUserDto, PointResponseDto } from './point.dto';
+import { PointChargeDto, PointUserDto, PointResponseDto, PointUseDto } from './point.dto';
 
 @Injectable()
 export class PointService {
@@ -61,6 +61,43 @@ export class PointService {
     return {
       userId: dto.userId,
       currentBalance: userPoint.point,
+      timestamp: Date.now(),
+    };
+  }
+
+  async usePoints(dto: PointUseDto): Promise<PointResponseDto> {
+    // 입력값 검증
+    this.validateUserId(dto.userId);
+    this.validatePointsAmount(dto.amount);
+    
+    // 현재 잔고 조회
+    const currentUserPoint = await this.userPointTable.selectById(dto.userId);
+    const currentBalance = currentUserPoint.point;
+    
+    // 잔고 부족 검증
+    if (currentBalance < dto.amount) {
+      throw new Error('Insufficient balance');
+    }
+    
+    // 포인트 차감
+    const newBalance = currentBalance - dto.amount;
+    
+    // 포인트 업데이트
+    await this.userPointTable.insertOrUpdate(dto.userId, newBalance);
+    
+    // 포인트 내역 저장
+    await this.pointHistoryTable.insert(
+      dto.userId,
+      dto.amount,
+      TransactionType.USE,
+      Date.now()
+    );
+    
+    return {
+      userId: dto.userId,
+      currentBalance: newBalance,
+      transactionAmount: dto.amount,
+      transactionType: 'USE',
       timestamp: Date.now(),
     };
   }
