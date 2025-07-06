@@ -21,25 +21,25 @@ describe('PointService', () => {
       it('새로운 사용자에게 포인트를 추가하고 새로운 잔액을 반환해야 한다', () => {
         // Given: 새로운 사용자에게 포인트 추가
         const userId = 1;
-        const pointsToAdd = 100;
+        const pointsToAdd = 1000; // 최소 충전 금액
         
         // When: 포인트 추가
         const result = service.addPoints(userId, pointsToAdd);
         
         // Then: 새로운 잔액 반환
-        expect(result).toBe(100);
+        expect(result).toBe(1000);
       });
 
       it('기존 사용자의 포인트를 누적해야 한다', () => {
         // Given: 기존 사용자에게 포인트 추가
         const userId = 1;
-        service.addPoints(userId, 100);
+        service.addPoints(userId, 1000);
         
         // When: 추가 포인트 충전
-        const result = service.addPoints(userId, 50);
+        const result = service.addPoints(userId, 1000);
         
         // Then: 누적된 잔액 반환
-        expect(result).toBe(150);
+        expect(result).toBe(2000);
       });
 
       it('최소 충전 금액 미만일 때 에러를 발생시켜야 한다', () => {
@@ -60,14 +60,14 @@ describe('PointService', () => {
         const user2 = 2;
         
         // When: 각각 다른 포인트 추가
-        service.addPoints(user1, 100);
-        service.addPoints(user2, 200);
-        const result1 = service.addPoints(user1, 50);
-        const result2 = service.addPoints(user2, 75);
+        service.addPoints(user1, 1000);
+        service.addPoints(user2, 2000);
+        const result1 = service.addPoints(user1, 1000);
+        const result2 = service.addPoints(user2, 2000);
         
         // Then: 각각 독립적으로 관리
-        expect(result1).toBe(150); // user1: 100 + 50
-        expect(result2).toBe(275); // user2: 200 + 75
+        expect(result1).toBe(2000); // user1: 1000 + 1000
+        expect(result2).toBe(4000); // user2: 2000 + 2000
       });
     });
 
@@ -100,11 +100,11 @@ describe('PointService', () => {
         // Given: 기존 잔고 + 추가 충전이 최대 잔고 초과
         const userId = 1;
         const maxBalance = 1000000;
-        service.addPoints(userId, maxBalance - 100); // 최대 잔고 - 100
+        service.addPoints(userId, maxBalance - 1000); // 최대 잔고 - 1000
         
         // When & Then: 추가 충전 시 최대 잔고 초과 예외 발생
         expect(() => {
-          service.addPoints(userId, 200); // 100 + 200 = 300 > 100
+          service.addPoints(userId, 2000); // 999000 + 2000 = 1001000 > 1000000
         }).toThrow('Maximum balance exceeded');
       });
     });
