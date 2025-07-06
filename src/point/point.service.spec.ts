@@ -4,6 +4,7 @@ import { UserPointTable } from '../database/userpoint.table';
 import { PointHistoryTable } from '../database/pointhistory.table';
 import { TransactionType } from './point.model';
 import { PointChargeDto, PointUserDto, PointResponseDto } from './point.dto';
+import { PointUseDto } from './point.dto';
 
 describe('PointService', () => {
   let service: PointService;
@@ -633,6 +634,388 @@ describe('PointService', () => {
         
         // When & Then: 메모리 부족 시 예외 발생
         await expect(service.getUserPoint(dto))
+          .rejects.toThrow('Out of memory');
+      });
+    });
+  });
+
+  describe('usePoints (포인트 사용)', () => {
+    describe('정상 케이스', () => {
+      it('포인트를 사용하고 남은 잔액을 반환해야 한다', async () => {
+        // Given: 포인트 사용
+        const dto: PointUseDto = {
+          userId: 1,
+          amount: 500,
+        };
+        const initialBalance = 1000;
+        
+        mockUserPointTable.selectById.mockResolvedValue({
+          id: dto.userId,
+          point: initialBalance,
+          updateMillis: Date.now(),
+        });
+        mockUserPointTable.insertOrUpdate.mockResolvedValue({
+          id: dto.userId,
+          point: initialBalance - dto.amount,
+          updateMillis: Date.now(),
+        });
+        mockPointHistoryTable.insert.mockResolvedValue({
+          id: 1,
+          userId: dto.userId,
+          amount: dto.amount,
+          type: TransactionType.USE,
+          timeMillis: Date.now(),
+        });
+        
+        // When: 포인트 사용
+        const result: PointResponseDto = await service.usePoints(dto);
+        
+        // Then: 남은 잔액 반환
+        expect(result.currentBalance).toBe(500); // 1000 - 500
+        expect(result.userId).toBe(dto.userId);
+        expect(result.transactionAmount).toBe(dto.amount);
+        expect(result.transactionType).toBe('USE');
+        expect(result.timestamp).toBeDefined();
+        expect(mockUserPointTable.selectById).toHaveBeenCalledWith(dto.userId);
+        expect(mockUserPointTable.insertOrUpdate).toHaveBeenCalledWith(dto.userId, 500);
+        expect(mockPointHistoryTable.insert).toHaveBeenCalledWith(
+          dto.userId,
+          dto.amount,
+          TransactionType.USE,
+          expect.any(Number)
+        );
+      });
+
+      it('전체 잔액을 사용할 수 있어야 한다', async () => {
+        // Given: 전체 잔액 사용
+        const dto: PointUseDto = {
+          userId: 1,
+          amount: 1000,
+        };
+        const initialBalance = 1000;
+        
+        mockUserPointTable.selectById.mockResolvedValue({
+          id: dto.userId,
+          point: initialBalance,
+          updateMillis: Date.now(),
+        });
+        mockUserPointTable.insertOrUpdate.mockResolvedValue({
+          id: dto.userId,
+          point: 0,
+          updateMillis: Date.now(),
+        });
+        mockPointHistoryTable.insert.mockResolvedValue({
+          id: 1,
+          userId: dto.userId,
+          amount: dto.amount,
+          type: TransactionType.USE,
+          timeMillis: Date.now(),
+        });
+        
+        // When: 전체 잔액 사용
+        const result: PointResponseDto = await service.usePoints(dto);
+        
+        // Then: 잔액 0 반환
+        expect(result.currentBalance).toBe(0);
+        expect(result.transactionType).toBe('USE');
+      });
+
+      it('여러 사용자가 독립적으로 포인트를 사용해야 한다', async () => {
+        // Given: 여러 사용자
+        const dto1: PointUseDto = { userId: 1, amount: 500 };
+        const dto2: PointUseDto = { userId: 2, amount: 300 };
+        
+        mockUserPointTable.selectById
+          .mockResolvedValueOnce({
+            id: dto1.userId,
+            point: 1000,
+            updateMillis: Date.now(),
+          })
+          .mockResolvedValueOnce({
+            id: dto2.userId,
+            point: 800,
+            updateMillis: Date.now(),
+          });
+        
+        mockUserPointTable.insertOrUpdate
+          .mockResolvedValueOnce({
+            id: dto1.userId,
+            point: 500,
+            updateMillis: Date.now(),
+          })
+          .mockResolvedValueOnce({
+            id: dto2.userId,
+            point: 500,
+            updateMillis: Date.now(),
+          });
+        
+        mockPointHistoryTable.insert.mockResolvedValue({
+          id: 1,
+          userId: 1,
+          amount: 500,
+          type: TransactionType.USE,
+          timeMillis: Date.now(),
+        });
+        
+        // When: 각각 포인트 사용
+        const result1: PointResponseDto = await service.usePoints(dto1);
+        const result2: PointResponseDto = await service.usePoints(dto2);
+        
+        // Then: 각각 독립적으로 처리
+        expect(result1.currentBalance).toBe(500); // user1: 1000 - 500
+        expect(result2.currentBalance).toBe(500); // user2: 800 - 300
+        expect(result1.transactionType).toBe('USE');
+        expect(result2.transactionType).toBe('USE');
+      });
+    });
+
+    describe('잔고 부족 케이스', () => {
+      it('잔고 부족 시 에러를 발생시켜야 한다', async () => {
+        // Given: 잔고 부족
+        const dto: PointUseDto = {
+          userId: 1,
+          amount: 1000,
+        };
+        const insufficientBalance = 500;
+        
+        mockUserPointTable.selectById.mockResolvedValue({
+          id: dto.userId,
+          point: insufficientBalance,
+          updateMillis: Date.now(),
+        });
+        
+        // When & Then: 잔고 부족 시 예외 발생
+        await expect(service.usePoints(dto))
+          .rejects.toThrow('Insufficient balance');
+      });
+
+      it('잔고가 0일 때 사용 시도하면 에러를 발생시켜야 한다', async () => {
+        // Given: 잔고 0
+        const dto: PointUseDto = {
+          userId: 1,
+          amount: 100,
+        };
+        
+        mockUserPointTable.selectById.mockResolvedValue({
+          id: dto.userId,
+          point: 0,
+          updateMillis: Date.now(),
+        });
+        
+        // When & Then: 잔고 0 시 예외 발생
+        await expect(service.usePoints(dto))
+          .rejects.toThrow('Insufficient balance');
+      });
+
+      it('사용 금액이 잔고와 정확히 같을 때는 허용해야 한다', async () => {
+        // Given: 사용 금액 = 잔고
+        const dto: PointUseDto = {
+          userId: 1,
+          amount: 1000,
+        };
+        const balance = 1000;
+        
+        mockUserPointTable.selectById.mockResolvedValue({
+          id: dto.userId,
+          point: balance,
+          updateMillis: Date.now(),
+        });
+        mockUserPointTable.insertOrUpdate.mockResolvedValue({
+          id: dto.userId,
+          point: 0,
+          updateMillis: Date.now(),
+        });
+        mockPointHistoryTable.insert.mockResolvedValue({
+          id: 1,
+          userId: dto.userId,
+          amount: dto.amount,
+          type: TransactionType.USE,
+          timeMillis: Date.now(),
+        });
+        
+        // When: 정확히 같은 금액 사용
+        const result: PointResponseDto = await service.usePoints(dto);
+        
+        // Then: 성공해야 함
+        expect(result.currentBalance).toBe(0);
+        expect(result.transactionType).toBe('USE');
+      });
+    });
+
+    describe('예외 케이스', () => {
+      it('음수 포인트 사용 시 에러를 발생시켜야 한다', async () => {
+        // Given: 음수 포인트 사용 (DTO 검증에서 차단됨)
+        const dto: PointUseDto = {
+          userId: 1,
+          amount: -100, // DTO 검증에서 차단
+        };
+        
+        // When & Then: DTO 검증에서 차단됨
+        await expect(service.usePoints(dto))
+          .rejects.toThrow();
+      });
+
+      it('0 포인트 사용 시 에러를 발생시켜야 한다', async () => {
+        // Given: 0 포인트 사용
+        const dto: PointUseDto = {
+          userId: 1,
+          amount: 0, // DTO 검증에서 차단
+        };
+        
+        // When & Then: DTO 검증에서 차단됨
+        await expect(service.usePoints(dto))
+          .rejects.toThrow();
+      });
+
+      it('잘못된 사용자 ID 시 에러를 발생시켜야 한다', async () => {
+        // Given: 잘못된 사용자 ID
+        const invalidDtos = [
+          { userId: 0, amount: 100 },
+          { userId: -1, amount: 100 },
+          { userId: -100, amount: 100 },
+        ];
+        
+        // When & Then: 잘못된 사용자 ID 시 예외 발생
+        for (const dto of invalidDtos) {
+          await expect(service.usePoints(dto as PointUseDto))
+            .rejects.toThrow();
+        }
+      });
+
+      it('소수점 포인트 사용 시 에러를 발생시켜야 한다', async () => {
+        // Given: 소수점 포인트 사용 (DTO 검증에서 차단됨)
+        const dto: PointUseDto = {
+          userId: 1,
+          amount: 100.5, // DTO 검증에서 차단
+        };
+        
+        // When & Then: DTO 검증에서 차단됨
+        await expect(service.usePoints(dto))
+          .rejects.toThrow();
+      });
+    });
+
+    describe('경계값 테스트', () => {
+      it('최대 정수값 사용 시 에러를 발생시켜야 한다', async () => {
+        // Given: 최대 정수값 사용 (DTO 검증에서 차단됨)
+        const dto: PointUseDto = {
+          userId: 1,
+          amount: Number.MAX_SAFE_INTEGER, // DTO 검증에서 차단
+        };
+        
+        // When & Then: DTO 검증에서 차단됨
+        await expect(service.usePoints(dto))
+          .rejects.toThrow();
+      });
+
+      it('매우 큰 사용자 ID 시 에러를 발생시켜야 한다', async () => {
+        // Given: 매우 큰 사용자 ID (DTO 검증에서 차단됨)
+        const dto: PointUseDto = {
+          userId: 999999999999, // DTO 검증에서 차단
+          amount: 100,
+        };
+        
+        // When & Then: DTO 검증에서 차단됨
+        await expect(service.usePoints(dto))
+          .rejects.toThrow();
+      });
+    });
+
+    describe('데이터베이스 오류 케이스', () => {
+      it('사용자 포인트 조회 실패 시 에러를 발생시켜야 한다', async () => {
+        // Given: 데이터베이스 조회 실패
+        const dto: PointUseDto = {
+          userId: 1,
+          amount: 100,
+        };
+        
+        mockUserPointTable.selectById.mockRejectedValue(
+          new Error('Database connection failed')
+        );
+        
+        // When & Then: 데이터베이스 오류 시 예외 발생
+        await expect(service.usePoints(dto))
+          .rejects.toThrow('Database connection failed');
+      });
+
+      it('포인트 업데이트 실패 시 에러를 발생시켜야 한다', async () => {
+        // Given: 포인트 업데이트 실패
+        const dto: PointUseDto = {
+          userId: 1,
+          amount: 100,
+        };
+        
+        mockUserPointTable.selectById.mockResolvedValue({
+          id: dto.userId,
+          point: 1000,
+          updateMillis: Date.now(),
+        });
+        mockUserPointTable.insertOrUpdate.mockRejectedValue(
+          new Error('Update failed')
+        );
+        
+        // When & Then: 업데이트 실패 시 예외 발생
+        await expect(service.usePoints(dto))
+          .rejects.toThrow('Update failed');
+      });
+
+      it('포인트 내역 저장 실패 시 에러를 발생시켜야 한다', async () => {
+        // Given: 포인트 내역 저장 실패
+        const dto: PointUseDto = {
+          userId: 1,
+          amount: 100,
+        };
+        
+        mockUserPointTable.selectById.mockResolvedValue({
+          id: dto.userId,
+          point: 1000,
+          updateMillis: Date.now(),
+        });
+        mockUserPointTable.insertOrUpdate.mockResolvedValue({
+          id: dto.userId,
+          point: 900,
+          updateMillis: Date.now(),
+        });
+        mockPointHistoryTable.insert.mockRejectedValue(
+          new Error('History save failed')
+        );
+        
+        // When & Then: 내역 저장 실패 시 예외 발생
+        await expect(service.usePoints(dto))
+          .rejects.toThrow('History save failed');
+      });
+    });
+
+    describe('네트워크 및 시스템 오류 케이스', () => {
+      it('타임아웃 발생 시 에러를 발생시켜야 한다', async () => {
+        // Given: 네트워크 타임아웃
+        const dto: PointUseDto = {
+          userId: 1,
+          amount: 100,
+        };
+        
+        mockUserPointTable.selectById.mockRejectedValue(
+          new Error('Request timeout')
+        );
+        
+        // When & Then: 타임아웃 시 예외 발생
+        await expect(service.usePoints(dto))
+          .rejects.toThrow('Request timeout');
+      });
+
+      it('메모리 부족 시 에러를 발생시켜야 한다', async () => {
+        // Given: 메모리 부족 상황
+        const dto: PointUseDto = {
+          userId: 1,
+          amount: 100,
+        };
+        
+        mockUserPointTable.selectById.mockRejectedValue(
+          new Error('Out of memory')
+        );
+        
+        // When & Then: 메모리 부족 시 예외 발생
+        await expect(service.usePoints(dto))
           .rejects.toThrow('Out of memory');
       });
     });
