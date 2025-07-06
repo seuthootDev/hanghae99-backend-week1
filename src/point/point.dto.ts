@@ -39,16 +39,3 @@ export class PointResponseDto {
     transactionType?: 'CHARGE' | 'USE';
     timestamp: number;
 }
-
-// 기존 DTO (하위 호환성 유지)
-export class PointBody {
-    @IsInt()
-    @Min(1)
-    userId: number;
-
-    @IsOptional()
-    @IsInt()
-    @Min(1)
-    @Max(1000000)
-    amount?: number;
-}
