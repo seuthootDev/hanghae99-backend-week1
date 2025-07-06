@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { UserPointTable } from '../database/userpoint.table';
 import { PointHistoryTable } from '../database/pointhistory.table';
 import { TransactionType } from './point.model';
+import { PointChargeDto, PointUserDto, PointResponseDto } from './point.dto';
 
 @Injectable()
 export class PointService {
@@ -16,32 +17,52 @@ export class PointService {
     private pointHistoryTable: PointHistoryTable,
   ) {}
 
-  async addPoints(userId: number, points: number): Promise<number> {
+  async addPoints(dto: PointChargeDto): Promise<PointResponseDto> {
     // 입력값 검증
-    this.validateUserId(userId);
-    this.validatePointsAmount(points);
-    this.validateChargeAmount(points);
+    this.validateUserId(dto.userId);
+    this.validatePointsAmount(dto.amount);
+    this.validateChargeAmount(dto.amount);
     
     // 현재 잔고 조회
-    const currentUserPoint = await this.userPointTable.selectById(userId);
+    const currentUserPoint = await this.userPointTable.selectById(dto.userId);
     const currentBalance = currentUserPoint.point;
     
     // 최대 잔고 검증
-    const newBalance = currentBalance + points;
+    const newBalance = currentBalance + dto.amount;
     this.validateMaxBalance(newBalance);
     
     // 포인트 업데이트
-    await this.userPointTable.insertOrUpdate(userId, newBalance);
+    await this.userPointTable.insertOrUpdate(dto.userId, newBalance);
     
     // 포인트 내역 저장
     await this.pointHistoryTable.insert(
-      userId,
-      points,
+      dto.userId,
+      dto.amount,
       TransactionType.CHARGE,
       Date.now()
     );
     
-    return newBalance;
+    return {
+      userId: dto.userId,
+      currentBalance: newBalance,
+      transactionAmount: dto.amount,
+      transactionType: 'CHARGE',
+      timestamp: Date.now(),
+    };
+  }
+
+  async getUserPoint(dto: PointUserDto): Promise<PointResponseDto> {
+    // 입력값 검증
+    this.validateUserId(dto.userId);
+    
+    // 사용자 포인트 조회
+    const userPoint = await this.userPointTable.selectById(dto.userId);
+    
+    return {
+      userId: dto.userId,
+      currentBalance: userPoint.point,
+      timestamp: Date.now(),
+    };
   }
 
   private validateUserId(userId: number): void {
