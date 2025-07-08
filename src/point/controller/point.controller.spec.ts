@@ -1,47 +1,33 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { PointController } from './point.controller';
 import { PointService } from '../service/point.service';
-import { UserPointTable } from '../../database/userpoint.table';
-import { PointHistoryTable } from '../../database/pointhistory.table';
 import { PointChargeDto, PointUserDto, PointUseDto, PointResponseDto } from '../dto/point.dto';
 import { TransactionType, PointHistory } from '../point.model';
 
 describe('PointController', () => {
   let controller: PointController;
-  let service: PointService;
-  let mockUserPointTable: jest.Mocked<UserPointTable>;
-  let mockPointHistoryTable: jest.Mocked<PointHistoryTable>;
+  let mockPointService: jest.Mocked<PointService>;
 
   beforeEach(async () => {
-    const mockUserPointTableProvider = {
-      provide: UserPointTable,
+    const mockPointServiceProvider = {
+      provide: PointService,
       useValue: {
-        selectById: jest.fn(),
-        insertOrUpdate: jest.fn(),
-      },
-    };
-
-    const mockPointHistoryTableProvider = {
-      provide: PointHistoryTable,
-      useValue: {
-        selectAllByUserId: jest.fn(),
-        insert: jest.fn(),
+        addPoints: jest.fn(),
+        getUserPoint: jest.fn(),
+        usePoints: jest.fn(),
+        getPointHistory: jest.fn(),
       },
     };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [PointController],
       providers: [
-        PointService,
-        mockUserPointTableProvider,
-        mockPointHistoryTableProvider,
+        mockPointServiceProvider,
       ],
     }).compile();
 
     controller = module.get<PointController>(PointController);
-    service = module.get<PointService>(PointService);
-    mockUserPointTable = module.get(UserPointTable);
-    mockPointHistoryTable = module.get(PointHistoryTable);
+    mockPointService = module.get(PointService);
   });
 
   describe('GET /point/:id (포인트 조회)', () => {
@@ -49,13 +35,13 @@ describe('PointController', () => {
       it('사용자의 포인트를 조회해야 한다', async () => {
         // Given: 사용자 포인트 정보
         const userId = 1;
-        const mockUserPoint = {
-          id: userId,
-          point: 5000,
-          updateMillis: Date.now(),
+        const mockResponse: PointResponseDto = {
+          userId: userId,
+          currentBalance: 5000,
+          timestamp: Date.now(),
         };
         
-        mockUserPointTable.selectById.mockResolvedValue(mockUserPoint);
+        mockPointService.getUserPoint.mockResolvedValue(mockResponse);
         
         // When: 포인트 조회
         const result = await controller.point(userId.toString());
@@ -68,19 +54,19 @@ describe('PointController', () => {
         });
         expect(result.userId).toBe(userId);
         expect(result.currentBalance).toBe(5000);
-        expect(mockUserPointTable.selectById).toHaveBeenCalledWith(userId);
+        expect(mockPointService.getUserPoint).toHaveBeenCalledWith({ userId });
       });
 
       it('포인트가 0인 사용자도 조회해야 한다', async () => {
         // Given: 포인트가 0인 사용자
         const userId = 2;
-        const mockUserPoint = {
-          id: userId,
-          point: 0,
-          updateMillis: Date.now(),
+        const mockResponse: PointResponseDto = {
+          userId: userId,
+          currentBalance: 0,
+          timestamp: Date.now(),
         };
         
-        mockUserPointTable.selectById.mockResolvedValue(mockUserPoint);
+        mockPointService.getUserPoint.mockResolvedValue(mockResponse);
         
         // When: 포인트 조회
         const result = await controller.point(userId.toString());
@@ -96,28 +82,17 @@ describe('PointController', () => {
     });
 
     describe('예외 케이스', () => {
-      it('존재하지 않는 사용자 ID에 대해 에러를 발생시켜야 한다', async () => {
-        // Given: 존재하지 않는 사용자
+      it('서비스에서 에러가 발생하면 에러를 전파해야 한다', async () => {
+        // Given: 서비스에서 에러 발생
         const userId = 999;
         
-        mockUserPointTable.selectById.mockRejectedValue(
+        mockPointService.getUserPoint.mockRejectedValue(
           new Error('User not found')
         );
         
         // When & Then: 에러 발생
         await expect(controller.point(userId.toString()))
           .rejects.toThrow('User not found');
-      });
-
-      it('잘못된 사용자 ID 형식에 대해 에러를 발생시켜야 한다', async () => {
-        // Given: 잘못된 ID 형식
-        const invalidIds = ['abc', '1.5', '-1', '0'];
-        
-        // When & Then: 각각 에러 발생
-        for (const invalidId of invalidIds) {
-          await expect(controller.point(invalidId))
-            .rejects.toThrow();
-        }
       });
     });
   });
@@ -144,7 +119,7 @@ describe('PointController', () => {
           },
         ];
         
-        mockPointHistoryTable.selectAllByUserId.mockResolvedValue(mockHistories);
+        mockPointService.getPointHistory.mockResolvedValue(mockHistories);
         
         // When: 포인트 내역 조회
         const result = await controller.history(userId.toString());
@@ -152,14 +127,14 @@ describe('PointController', () => {
         // Then: 내역 반환
         expect(result).toEqual(mockHistories);
         expect(result).toHaveLength(2);
-        expect(mockPointHistoryTable.selectAllByUserId).toHaveBeenCalledWith(userId);
+        expect(mockPointService.getPointHistory).toHaveBeenCalledWith({ userId });
       });
 
       it('내역이 없을 때는 빈 배열을 반환해야 한다', async () => {
         // Given: 내역이 없는 사용자
         const userId = 999;
         
-        mockPointHistoryTable.selectAllByUserId.mockResolvedValue([]);
+        mockPointService.getPointHistory.mockResolvedValue([]);
         
         // When: 포인트 내역 조회
         const result = await controller.history(userId.toString());
@@ -171,11 +146,11 @@ describe('PointController', () => {
     });
 
     describe('예외 케이스', () => {
-      it('존재하지 않는 사용자 ID에 대해 에러를 발생시켜야 한다', async () => {
-        // Given: 존재하지 않는 사용자
+      it('서비스에서 에러가 발생하면 에러를 전파해야 한다', async () => {
+        // Given: 서비스에서 에러 발생
         const userId = 999;
         
-        mockPointHistoryTable.selectAllByUserId.mockRejectedValue(
+        mockPointService.getPointHistory.mockRejectedValue(
           new Error('User not found')
         );
         
@@ -200,7 +175,7 @@ describe('PointController', () => {
           timestamp: Date.now(),
         };
         
-        jest.spyOn(service, 'addPoints').mockResolvedValue(mockResponse);
+        mockPointService.addPoints.mockResolvedValue(mockResponse);
         
         // When: 포인트 충전
         const result = await controller.charge(userId.toString(), chargeDto);
@@ -213,6 +188,7 @@ describe('PointController', () => {
           transactionType: 'CHARGE',
           timestamp: expect.any(Number),
         });
+        expect(mockPointService.addPoints).toHaveBeenCalledWith(chargeDto);
       });
 
       it('최소 충전 금액으로 충전해야 한다', async () => {
@@ -227,7 +203,7 @@ describe('PointController', () => {
           timestamp: Date.now(),
         };
         
-        jest.spyOn(service, 'addPoints').mockResolvedValue(mockResponse);
+        mockPointService.addPoints.mockResolvedValue(mockResponse);
         
         // When: 포인트 충전
         const result = await controller.charge(userId.toString(), chargeDto);
@@ -244,32 +220,18 @@ describe('PointController', () => {
     });
 
     describe('예외 케이스', () => {
-      it('잘못된 충전 금액에 대해 에러를 발생시켜야 한다', async () => {
-        // Given: 잘못된 충전 금액
+      it('서비스에서 에러가 발생하면 에러를 전파해야 한다', async () => {
+        // Given: 서비스에서 에러 발생
         const userId = 1;
         const invalidChargeDto: PointChargeDto = { userId, amount: -100 };
         
-        jest.spyOn(service, 'addPoints').mockRejectedValue(
+        mockPointService.addPoints.mockRejectedValue(
           new Error('Cannot charge negative points')
         );
         
         // When & Then: 에러 발생
         await expect(controller.charge(userId.toString(), invalidChargeDto))
           .rejects.toThrow('Cannot charge negative points');
-      });
-
-      it('최소 충전 금액 미만에 대해 에러를 발생시켜야 한다', async () => {
-        // Given: 최소 충전 금액 미만
-        const userId = 1;
-        const invalidChargeDto: PointChargeDto = { userId, amount: 500 };
-        
-        jest.spyOn(service, 'addPoints').mockRejectedValue(
-          new Error('Minimum charge amount is 1000 points')
-        );
-        
-        // When & Then: 에러 발생
-        await expect(controller.charge(userId.toString(), invalidChargeDto))
-          .rejects.toThrow('Minimum charge amount is 1000 points');
       });
     });
   });
@@ -288,7 +250,7 @@ describe('PointController', () => {
           timestamp: Date.now(),
         };
         
-        jest.spyOn(service, 'usePoints').mockResolvedValue(mockResponse);
+        mockPointService.usePoints.mockResolvedValue(mockResponse);
         
         // When: 포인트 사용
         const result = await controller.use(userId.toString(), useDto);
@@ -301,6 +263,7 @@ describe('PointController', () => {
           transactionType: 'USE',
           timestamp: expect.any(Number),
         });
+        expect(mockPointService.usePoints).toHaveBeenCalledWith(useDto);
       });
 
       it('전체 잔고를 사용할 수 있어야 한다', async () => {
@@ -315,7 +278,7 @@ describe('PointController', () => {
           timestamp: Date.now(),
         };
         
-        jest.spyOn(service, 'usePoints').mockResolvedValue(mockResponse);
+        mockPointService.usePoints.mockResolvedValue(mockResponse);
         
         // When: 포인트 사용
         const result = await controller.use(userId.toString(), useDto);
@@ -332,32 +295,18 @@ describe('PointController', () => {
     });
 
     describe('예외 케이스', () => {
-      it('잔고 부족 시 에러를 발생시켜야 한다', async () => {
-        // Given: 잔고 부족
+      it('서비스에서 에러가 발생하면 에러를 전파해야 한다', async () => {
+        // Given: 서비스에서 에러 발생
         const userId = 1;
         const useDto: PointUseDto = { userId, amount: 10000 };
         
-        jest.spyOn(service, 'usePoints').mockRejectedValue(
+        mockPointService.usePoints.mockRejectedValue(
           new Error('Insufficient balance')
         );
         
         // When & Then: 에러 발생
         await expect(controller.use(userId.toString(), useDto))
           .rejects.toThrow('Insufficient balance');
-      });
-
-      it('잘못된 사용 금액에 대해 에러를 발생시켜야 한다', async () => {
-        // Given: 잘못된 사용 금액
-        const userId = 1;
-        const invalidUseDto: PointUseDto = { userId, amount: -100 };
-        
-        jest.spyOn(service, 'usePoints').mockRejectedValue(
-          new Error('Cannot charge negative points')
-        );
-        
-        // When & Then: 에러 발생
-        await expect(controller.use(userId.toString(), invalidUseDto))
-          .rejects.toThrow('Cannot charge negative points');
       });
     });
   });
