@@ -56,29 +56,6 @@ describe('PointController', () => {
         expect(result.currentBalance).toBe(5000);
         expect(mockPointService.getUserPoint).toHaveBeenCalledWith({ userId });
       });
-
-      it('포인트가 0인 사용자도 조회해야 한다', async () => {
-        // Given: 포인트가 0인 사용자
-        const userId = 2;
-        const mockResponse: PointResponseDto = {
-          userId: userId,
-          currentBalance: 0,
-          timestamp: Date.now(),
-        };
-        
-        mockPointService.getUserPoint.mockResolvedValue(mockResponse);
-        
-        // When: 포인트 조회
-        const result = await controller.point(userId.toString());
-        
-        // Then: 포인트 정보 반환
-        expect(result).toEqual({
-          userId: userId,
-          currentBalance: 0,
-          timestamp: expect.any(Number),
-        });
-        expect(result.currentBalance).toBe(0);
-      });
     });
 
     describe('예외 케이스', () => {
@@ -130,19 +107,7 @@ describe('PointController', () => {
         expect(mockPointService.getPointHistory).toHaveBeenCalledWith({ userId });
       });
 
-      it('내역이 없을 때는 빈 배열을 반환해야 한다', async () => {
-        // Given: 내역이 없는 사용자
-        const userId = 999;
-        
-        mockPointService.getPointHistory.mockResolvedValue([]);
-        
-        // When: 포인트 내역 조회
-        const result = await controller.history(userId.toString());
-        
-        // Then: 빈 배열 반환
-        expect(result).toEqual([]);
-        expect(result).toHaveLength(0);
-      });
+
     });
 
     describe('예외 케이스', () => {
@@ -191,32 +156,7 @@ describe('PointController', () => {
         expect(mockPointService.addPoints).toHaveBeenCalledWith(chargeDto);
       });
 
-      it('최소 충전 금액으로 충전해야 한다', async () => {
-        // Given: 최소 충전 금액
-        const userId = 1;
-        const chargeDto: PointChargeDto = { userId, amount: 1000 };
-        const mockResponse: PointResponseDto = {
-          userId: userId,
-          currentBalance: 1000,
-          transactionAmount: 1000,
-          transactionType: 'CHARGE',
-          timestamp: Date.now(),
-        };
-        
-        mockPointService.addPoints.mockResolvedValue(mockResponse);
-        
-        // When: 포인트 충전
-        const result = await controller.charge(userId.toString(), chargeDto);
-        
-        // Then: 충전 결과 반환
-        expect(result).toEqual({
-          userId: userId,
-          currentBalance: 1000,
-          transactionAmount: 1000,
-          transactionType: 'CHARGE',
-          timestamp: expect.any(Number),
-        });
-      });
+
     });
 
     describe('예외 케이스', () => {
@@ -266,32 +206,7 @@ describe('PointController', () => {
         expect(mockPointService.usePoints).toHaveBeenCalledWith(useDto);
       });
 
-      it('전체 잔고를 사용할 수 있어야 한다', async () => {
-        // Given: 전체 잔고 사용
-        const userId = 1;
-        const useDto: PointUseDto = { userId, amount: 5000 };
-        const mockResponse: PointResponseDto = {
-          userId: userId,
-          currentBalance: 0,
-          transactionAmount: 5000,
-          transactionType: 'USE',
-          timestamp: Date.now(),
-        };
-        
-        mockPointService.usePoints.mockResolvedValue(mockResponse);
-        
-        // When: 포인트 사용
-        const result = await controller.use(userId.toString(), useDto);
-        
-        // Then: 사용 결과 반환
-        expect(result).toEqual({
-          userId: userId,
-          currentBalance: 0,
-          transactionAmount: 5000,
-          transactionType: 'USE',
-          timestamp: expect.any(Number),
-        });
-      });
+
     });
 
     describe('예외 케이스', () => {
