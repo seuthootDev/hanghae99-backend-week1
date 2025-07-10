@@ -388,4 +388,327 @@ describe('PointService', () => {
       });
     });
   });
+
+  describe('동시성 테스트', () => {
+    describe('동시 포인트 사용', () => {
+      it('동시에 같은 사용자의 포인트를 사용할 때 잔고 부족 검증이 제대로 작동해야 한다', async () => {
+        // Given: 잔고 1000원, 동시에 800원씩 사용 요청
+        const userId = 1;
+        const initialBalance = 1000;
+        const useAmount = 800;
+        
+        // 첫 번째 요청: 잔고 조회 → 검증 통과 → 차감
+        mockPointRepository.getUserPoint
+          .mockResolvedValueOnce({
+            id: userId,
+            point: initialBalance,
+            updateMillis: Date.now(),
+          })
+          .mockResolvedValueOnce({
+            id: userId,
+            point: initialBalance - useAmount, // 첫 번째 차감 후 잔고
+            updateMillis: Date.now(),
+          });
+        
+        mockPointRepository.updatePointWithHistory
+          .mockResolvedValueOnce({
+            id: userId,
+            point: initialBalance - useAmount,
+            updateMillis: Date.now(),
+          });
+        
+        // When: 동시에 두 개의 포인트 사용 요청
+        const request1 = service.usePoints({ userId, amount: useAmount });
+        const request2 = service.usePoints({ userId, amount: useAmount });
+        
+        // Then: 첫 번째는 성공, 두 번째는 실패
+        const result1 = await request1;
+        expect(result1.currentBalance).toBe(200); // 1000 - 800
+        
+        await expect(request2).rejects.toThrow('Insufficient balance');
+      });
+
+      it('동시에 충전과 사용이 들어올 때 순차적으로 처리되어야 한다', async () => {
+        // Given: 잔고 0원, 동시에 충전(1000원)과 사용(500원) 요청
+        const userId = 1;
+        const chargeAmount = 1000;
+        const useAmount = 500;
+        
+        // 충전 요청: 잔고 조회 → 충전
+        mockPointRepository.getUserPoint
+          .mockResolvedValueOnce({
+            id: userId,
+            point: 0,
+            updateMillis: Date.now(),
+          });
+        
+        mockPointRepository.updatePointWithHistory
+          .mockResolvedValueOnce({
+            id: userId,
+            point: chargeAmount,
+            updateMillis: Date.now(),
+          });
+        
+        // 사용 요청: 충전 후 잔고 조회 → 사용
+        mockPointRepository.getUserPoint
+          .mockResolvedValueOnce({
+            id: userId,
+            point: chargeAmount,
+            updateMillis: Date.now(),
+          });
+        
+        mockPointRepository.updatePointWithHistory
+          .mockResolvedValueOnce({
+            id: userId,
+            point: chargeAmount - useAmount,
+            updateMillis: Date.now(),
+          });
+        
+        // When: 동시에 충전과 사용 요청
+        const chargeRequest = service.addPoints({ userId, amount: chargeAmount });
+        const useRequest = service.usePoints({ userId, amount: useAmount });
+        
+        // Then: 순차적으로 처리되어 모두 성공
+        const chargeResult = await chargeRequest;
+        const useResult = await useRequest;
+        
+        expect(chargeResult.currentBalance).toBe(1000);
+        expect(useResult.currentBalance).toBe(500);
+      });
+    });
+
+    describe('동시 포인트 충전', () => {
+      it('동시에 같은 사용자에게 충전할 때 순차적으로 처리되어야 한다', async () => {
+        // Given: 잔고 0원, 동시에 1000원씩 충전 요청
+        const userId = 1;
+        const chargeAmount = 1000;
+        
+        // 첫 번째 충전
+        mockPointRepository.getUserPoint
+          .mockResolvedValueOnce({
+            id: userId,
+            point: 0,
+            updateMillis: Date.now(),
+          });
+        
+        mockPointRepository.updatePointWithHistory
+          .mockResolvedValueOnce({
+            id: userId,
+            point: chargeAmount,
+            updateMillis: Date.now(),
+          });
+        
+        // 두 번째 충전
+        mockPointRepository.getUserPoint
+          .mockResolvedValueOnce({
+            id: userId,
+            point: chargeAmount,
+            updateMillis: Date.now(),
+          });
+        
+        mockPointRepository.updatePointWithHistory
+          .mockResolvedValueOnce({
+            id: userId,
+            point: chargeAmount * 2,
+            updateMillis: Date.now(),
+          });
+        
+        // When: 동시에 두 개의 충전 요청
+        const request1 = service.addPoints({ userId, amount: chargeAmount });
+        const request2 = service.addPoints({ userId, amount: chargeAmount });
+        
+        // Then: 순차적으로 처리되어 모두 성공
+        const result1 = await request1;
+        const result2 = await request2;
+        
+        expect(result1.currentBalance).toBe(1000);
+        expect(result2.currentBalance).toBe(2000);
+      });
+    });
+
+    describe('다른 사용자 간 독립성', () => {
+      it('다른 사용자의 포인트 사용은 서로 영향을 주지 않아야 한다', async () => {
+        // Given: 두 사용자, 각각 잔고 1000원
+        const user1 = 1;
+        const user2 = 2;
+        const useAmount = 500;
+        
+        // 실제 잔고 상태를 시뮬레이션
+        let user1Balance = 1000;
+        let user2Balance = 1000;
+        
+        // 사용자별로 다른 잔고를 반환하도록 모킹
+        mockPointRepository.getUserPoint.mockImplementation(async (userId) => {
+          if (userId === user1) {
+            return {
+              id: user1,
+              point: user1Balance,
+              updateMillis: Date.now(),
+            };
+          } else if (userId === user2) {
+            return {
+              id: user2,
+              point: user2Balance,
+              updateMillis: Date.now(),
+            };
+          }
+          return {
+            id: userId,
+            point: 0,
+            updateMillis: Date.now(),
+          };
+        });
+        
+        mockPointRepository.updatePointWithHistory.mockImplementation(async (userId, newBalance, amount, type) => {
+          if (userId === user1) {
+            user1Balance = newBalance;
+          } else if (userId === user2) {
+            user2Balance = newBalance;
+          }
+          return {
+            id: userId,
+            point: newBalance,
+            updateMillis: Date.now(),
+          };
+        });
+        
+        // 첫 번째 사용 (잔고 1000 → 500)
+        const user1Result1 = await service.usePoints({ userId: user1, amount: useAmount });
+        const user2Result1 = await service.usePoints({ userId: user2, amount: useAmount });
+        expect(user1Result1.currentBalance).toBe(500);
+        expect(user2Result1.currentBalance).toBe(500);
+        
+        // 두 번째 사용 (잔고 500 → 0)
+        const user1Result2 = await service.usePoints({ userId: user1, amount: useAmount });
+        const user2Result2 = await service.usePoints({ userId: user2, amount: useAmount });
+        expect(user1Result2.currentBalance).toBe(0);
+        expect(user2Result2.currentBalance).toBe(0);
+        
+        // 세 번째 사용 (잔고 0 → 실패)
+        await expect(service.usePoints({ userId: user1, amount: useAmount }))
+          .rejects.toThrow('Insufficient balance');
+        await expect(service.usePoints({ userId: user2, amount: useAmount }))
+          .rejects.toThrow('Insufficient balance');
+      });
+    });
+  });
+
+  describe('실제 동시성 테스트', () => {
+    it('실제로 동시에 포인트 사용 요청이 들어올 때 뮤텍스가 작동해야 한다', async () => {
+      // Given: 잔고 1000원
+      const userId = 1;
+      const useAmount = 800;
+      let currentBalance = 1000;
+      
+      // 실제 레포지토리 동작을 시뮬레이션
+      mockPointRepository.getUserPoint.mockImplementation(async (id) => {
+        return {
+          id,
+          point: currentBalance,
+          updateMillis: Date.now(),
+        };
+      });
+      
+      mockPointRepository.updatePointWithHistory.mockImplementation(async (id, newBalance, amount, type) => {
+        // 실제로 잔고를 업데이트
+        currentBalance = newBalance;
+        return {
+          id,
+          point: newBalance,
+          updateMillis: Date.now(),
+        };
+      });
+      
+      // When: 실제로 동시에 두 개의 요청
+      const request1 = service.usePoints({ userId, amount: useAmount });
+      const request2 = service.usePoints({ userId, amount: useAmount });
+      
+      // Then: 첫 번째는 성공, 두 번째는 실패
+      const result1 = await request1;
+      expect(result1.currentBalance).toBe(200); // 1000 - 800
+      
+      await expect(request2).rejects.toThrow('Insufficient balance');
+    });
+
+    it('실제로 동시에 충전과 사용이 들어올 때 순차적으로 처리되어야 한다', async () => {
+      // Given: 잔고 0원
+      const userId = 1;
+      const chargeAmount = 1000;
+      const useAmount = 500;
+      let currentBalance = 0;
+      
+      // 실제 레포지토리 동작을 시뮬레이션
+      mockPointRepository.getUserPoint.mockImplementation(async (id) => {
+        return {
+          id,
+          point: currentBalance,
+          updateMillis: Date.now(),
+        };
+      });
+      
+      mockPointRepository.updatePointWithHistory.mockImplementation(async (id, newBalance, amount, type) => {
+        currentBalance = newBalance;
+        return {
+          id,
+          point: newBalance,
+          updateMillis: Date.now(),
+        };
+      });
+      
+      // When: 실제로 동시에 충전과 사용 요청
+      const chargeRequest = service.addPoints({ userId, amount: chargeAmount });
+      const useRequest = service.usePoints({ userId, amount: useAmount });
+      
+      // Then: 순차적으로 처리되어 모두 성공
+      const chargeResult = await chargeRequest;
+      const useResult = await useRequest;
+      
+      expect(chargeResult.currentBalance).toBe(1000);
+      expect(useResult.currentBalance).toBe(500);
+    });
+
+    it('Promise.all을 사용한 실제 동시 요청 테스트', async () => {
+      // Given: 잔고 1000원
+      const userId = 1;
+      const useAmount = 600;
+      let currentBalance = 1000;
+      
+      mockPointRepository.getUserPoint.mockImplementation(async (id) => {
+        return {
+          id,
+          point: currentBalance,
+          updateMillis: Date.now(),
+        };
+      });
+      
+      mockPointRepository.updatePointWithHistory.mockImplementation(async (id, newBalance, amount, type) => {
+        currentBalance = newBalance;
+        return {
+          id,
+          point: newBalance,
+          updateMillis: Date.now(),
+        };
+      });
+      
+      // When: Promise.all로 동시 요청
+      const requests = [
+        service.usePoints({ userId, amount: useAmount }),
+        service.usePoints({ userId, amount: useAmount }),
+      ];
+      
+      // Then: 첫 번째는 성공, 두 번째는 실패
+      const results = await Promise.allSettled(requests);
+      
+      expect(results[0].status).toBe('fulfilled');
+      expect(results[1].status).toBe('rejected');
+      
+      if (results[0].status === 'fulfilled') {
+        expect(results[0].value.currentBalance).toBe(400); // 1000 - 600
+      }
+      
+      if (results[1].status === 'rejected') {
+        expect(results[1].reason.message).toBe('Insufficient balance');
+      }
+    });
+  });
 }); 
