@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { Mutex } from 'async-mutex';
 import { TransactionType } from '../point.model';
 import { PointChargeDto, PointUserDto, PointResponseDto, PointUseDto } from '../dto/point.dto';
 import { PointRepository } from '../repository/point.repository';
@@ -11,39 +12,53 @@ export class PointService {
   private readonly MAX_USER_ID = 1000000000; // 최대 사용자 ID: 10억
   private readonly MAX_POINTS_AMOUNT = 1000000000; // 최대 포인트 값: 10억
 
+  // 사용자별 뮤텍스 관리
+  private userLocks = new Map<number, Mutex>();
+
   constructor(
     private pointRepository: PointRepository,
   ) {}
 
+  private getMutex(userId: number): Mutex {
+    if (!this.userLocks.has(userId)) {
+      this.userLocks.set(userId, new Mutex());
+    }
+    return this.userLocks.get(userId)!;
+  }
+
   async addPoints(dto: PointChargeDto): Promise<PointResponseDto> {
-    // 입력값 검증
-    this.validateUserId(dto.userId);
-    this.validatePointsAmount(dto.amount);
-    this.validateChargeAmount(dto.amount);
+    const mutex = this.getMutex(dto.userId);
     
-    // 현재 잔고 조회
-    const currentUserPoint = await this.pointRepository.getUserPoint(dto.userId);
-    const currentBalance = currentUserPoint.point;
-    
-    // 최대 잔고 검증
-    const newBalance = currentBalance + dto.amount;
-    this.validateMaxBalance(newBalance);
-    
-    // 포인트 업데이트 및 내역 저장
-    await this.pointRepository.updatePointWithHistory(
-      dto.userId,
-      newBalance,
-      dto.amount,
-      TransactionType.CHARGE
-    );
-    
-    return {
-      userId: dto.userId,
-      currentBalance: newBalance,
-      transactionAmount: dto.amount,
-      transactionType: 'CHARGE',
-      timestamp: Date.now(),
-    };
+    return await mutex.runExclusive(async () => {
+      // 입력값 검증
+      this.validateUserId(dto.userId);
+      this.validatePointsAmount(dto.amount);
+      this.validateChargeAmount(dto.amount);
+      
+      // 현재 잔고 조회
+      const currentUserPoint = await this.pointRepository.getUserPoint(dto.userId);
+      const currentBalance = currentUserPoint.point;
+      
+      // 최대 잔고 검증
+      const newBalance = currentBalance + dto.amount;
+      this.validateMaxBalance(newBalance);
+      
+      // 포인트 업데이트 및 내역 저장
+      await this.pointRepository.updatePointWithHistory(
+        dto.userId,
+        newBalance,
+        dto.amount,
+        TransactionType.CHARGE
+      );
+      
+      return {
+        userId: dto.userId,
+        currentBalance: newBalance,
+        transactionAmount: dto.amount,
+        transactionType: 'CHARGE',
+        timestamp: Date.now(),
+      };
+    });
   }
 
   async getUserPoint(dto: PointUserDto): Promise<PointResponseDto> {
@@ -61,37 +76,41 @@ export class PointService {
   }
 
   async usePoints(dto: PointUseDto): Promise<PointResponseDto> {
-    // 입력값 검증
-    this.validateUserId(dto.userId);
-    this.validatePointsAmount(dto.amount);
+    const mutex = this.getMutex(dto.userId);
     
-    // 현재 잔고 조회
-    const currentUserPoint = await this.pointRepository.getUserPoint(dto.userId);
-    const currentBalance = currentUserPoint.point;
-    
-    // 잔고 부족 검증
-    if (currentBalance < dto.amount) {
-      throw new Error('Insufficient balance');
-    }
-    
-    // 포인트 차감
-    const newBalance = currentBalance - dto.amount;
-    
-    // 포인트 업데이트 및 내역 저장
-    await this.pointRepository.updatePointWithHistory(
-      dto.userId,
-      newBalance,
-      dto.amount,
-      TransactionType.USE
-    );
-    
-    return {
-      userId: dto.userId,
-      currentBalance: newBalance,
-      transactionAmount: dto.amount,
-      transactionType: 'USE',
-      timestamp: Date.now(),
-    };
+    return await mutex.runExclusive(async () => {
+      // 입력값 검증
+      this.validateUserId(dto.userId);
+      this.validatePointsAmount(dto.amount);
+      
+      // 현재 잔고 조회
+      const currentUserPoint = await this.pointRepository.getUserPoint(dto.userId);
+      const currentBalance = currentUserPoint.point;
+      
+      // 잔고 부족 검증
+      if (currentBalance < dto.amount) {
+        throw new Error('Insufficient balance');
+      }
+      
+      // 포인트 차감
+      const newBalance = currentBalance - dto.amount;
+      
+      // 포인트 업데이트 및 내역 저장
+      await this.pointRepository.updatePointWithHistory(
+        dto.userId,
+        newBalance,
+        dto.amount,
+        TransactionType.USE
+      );
+      
+      return {
+        userId: dto.userId,
+        currentBalance: newBalance,
+        transactionAmount: dto.amount,
+        transactionType: 'USE',
+        timestamp: Date.now(),
+      };
+    });
   }
 
   async getPointHistory(dto: PointUserDto): Promise<any[]> {
